@@ -264,7 +264,7 @@ contract TrueReflect is IERC20, Ownable {
     }
 
     function setTransferTaxRate(uint _amount) external onlyDev {
-        require(_amount <= 15000 && _amount >= 1000); // Max 15%, Min 1%
+        require(_amount <= 7000 && _amount >= 1000); // Max 15%, Min 1%
         _transferTaxRate = _amount;
     }
     

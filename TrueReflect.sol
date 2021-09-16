@@ -183,6 +183,10 @@ contract TrueReflect is IERC20, Ownable {
     address internal constant _deadAddress = 0x000000000000000000000000000000000000dEaD;
     uint internal _deadLedger = 0; // counter for dead wallet adjustments
     uint internal _transferTaxRate = 5000; // 5%
+    address internal _lpAddress;
+    bool public EMERGENCY_MODE = false; // in the event that the reflect math is broken in an unresolvable way or a bug presents itself
+                                        // transfer of the token may become impossible without a bypass
+                                        // also useful for deployment and LP setup
 
     mapping(address => uint256) internal _balances;
     mapping (address => bool) internal _isExcludedFromReflect;
@@ -199,11 +203,16 @@ contract TrueReflect is IERC20, Ownable {
         _isExcludedFromReflect[_deadAddress] = true;
         _isExcludedFromReflect[_owner] = true;
         _isExcludedFromFees[_owner] = true;
-                
+        _isExcludedFromAntiWhale[_owner] = true;
         _totalSupply = _totalSupply.add(sValue);
         RFX = RFX.add(sValue);                 
 
         _balances[_owner] = sValue;
+
+    }
+
+    function setLpAddress(address _address) external onlyOwner { // to be set prior to transfer to MasterChef
+        _lpAddress = _address;
     }
 
     function name() public override view returns (string memory) {
@@ -234,6 +243,17 @@ contract TrueReflect is IERC20, Ownable {
         emit Approval(owner, spender, amount);
     }
     
+    modifier AntiWhale (address sender, uint amount) {
+        require(
+            EMERGENCY_MODE == true ||
+            _lpAddress == address(0) ||
+            _isExcludedFromAntiWhale[sender] ||
+            _isExcludedFromAntiWhale[tx.origin] ||
+            amount <= balanceOf(_lpAddress).mul(5).div(100)
+            );
+        _;
+    }
+    
     function isExcludedfromReflect(address _address) external view returns (bool _bool) {
         _bool = _isExcludedFromReflect[_address];
     }
@@ -245,6 +265,10 @@ contract TrueReflect is IERC20, Ownable {
     function isExcludedfromFees(address _address) external view returns (bool _bool) {
         _bool = _isExcludedFromFees[_address];
     }
+            
+    function isEmergencyModeOn() external view returns (bool _bool) {
+        _bool = EMERGENCY_MODE;
+    }
     
     function calculateFees(uint _amount) internal view returns (uint Fee){
         Fee = _amount.mul(_transferTaxRate).div(100000);
@@ -252,7 +276,7 @@ contract TrueReflect is IERC20, Ownable {
     
     function excludeFromReflect(address _address, bool _bool) external onlyDev {
         require(_isExcludedFromReflect[_address] != _bool, 'ERROR: already set');
-        _balances[_address] = _bool == true ? reflectValue(_balances[_address]) : valueReflected(_balances[_address]);
+        _balances[_address] = _bool == true ? reflectValue(_balances[_address]) : valueReflected(_balances[_address]);  // adjust user balance to conform to new ruleset and maintain value
         _isExcludedFromReflect[_address] = _bool;    
     }
     
@@ -263,8 +287,12 @@ contract TrueReflect is IERC20, Ownable {
     function excludeFromAntiWhale(address _address, bool _bool) external onlyDev {
         _isExcludedFromAntiWhale[_address] = _bool;
     }
+    
+    function setEmergencyMode(bool _bool) external onlyDev {
+        EMERGENCY_MODE = _bool;
+    }
 
-    function settleDeadAddress() internal { // scan dead address and spread its value to all holders.
+    function settleDeadAddress() public { // scan dead address and spread its value to all holders.
         uint a = balanceOf(_deadAddress);
         uint b = _deadLedger;
         uint c = a-b;
@@ -273,7 +301,7 @@ contract TrueReflect is IERC20, Ownable {
     }
 
     function setTransferTaxRate(uint _amount) external onlyDev {
-        require(_amount <= 15000 && _amount >= 1000); // Max 15%, Min 1%
+        require(_amount <= 7000 && _amount >= 1000); // Max 15%, Min 1%
         _transferTaxRate = _amount;
     }
     
@@ -285,12 +313,12 @@ contract TrueReflect is IERC20, Ownable {
         rValue =  reflectInBps().mul(_int).div(BPS);      
     }
     
-    function valueReflected(uint _int) internal view returns (uint rValue) { // find the tokens that equal a reflected value
+    function valueReflected(uint _int) internal view returns (uint rValue) { // find the tokens that reflected a value
         rValue =  _int.mul(BPS).div(reflectInBps());
     }
-                // owner always excluded                    
+   
     function balanceOf(address account) public override view returns (uint256 rValue) { // return balance or reflected balance
-        rValue = account == getOwner() ? _balances[account] : _isExcludedFromReflect[account] ? _balances[account] : reflectValue(_balances[account]);
+        rValue = EMERGENCY_MODE == true ? _balances[account] : _isExcludedFromReflect[account] ? _balances[account] : reflectValue(_balances[account]);
     }
 
     function transfer(address recipient, uint256 amount) public override returns (bool) {
@@ -314,13 +342,20 @@ contract TrueReflect is IERC20, Ownable {
         return true;
     }
 
-    function _transfer(address sender, address recipient, uint256 amount) internal virtual { // one function reflect logic
+    function _transfer(address sender, address recipient, uint256 amount) internal virtual AntiWhale(sender, amount) { // one function reflect logic
         require(sender != address(0), 'ERC20: transfer from the zero address');
         require(recipient != address(0), 'ERC20: transfer to the zero address');
         
         uint rValue = valueReflected(amount);
         uint fee = 0;
         uint rFee = 0;
+        
+        if(EMERGENCY_MODE == true) {
+            _balances[sender] -= amount;
+            _balances[recipient] +=  amount;    
+            emit Transfer(sender, recipient, amount);  
+            return;
+        }
         
         if(!_isExcludedFromFees[tx.origin]) {
             fee = calculateFees(amount);
@@ -334,19 +369,23 @@ contract TrueReflect is IERC20, Ownable {
         if(_isExcludedFromReflect[recipient] && _isExcludedFromReflect[sender])
        {    _balances[sender] -= amount;
             _balances[recipient] += fee > 0 ? amount - fee : amount;
+            return;
            
         }else if(_isExcludedFromReflect[sender]) 
         {
             _balances[sender] -= amount;
             _balances[recipient] += rFee > 0 ? rValue - rFee : rValue;
+            return;
         }
         else if(_isExcludedFromReflect[recipient])
        {    _balances[sender] -= rValue;
             _balances[recipient] += fee > 0 ? amount - fee : amount;
+            return;
        } else 
        {
             _balances[sender] -= rValue;
             _balances[recipient] += rFee > 0 ? rValue - rFee : rValue;
+            return;
        }
 
     }
@@ -363,4 +402,5 @@ contract TrueReflect is IERC20, Ownable {
 
         emit Transfer(address(this), account, amount);
     }
+    
 }

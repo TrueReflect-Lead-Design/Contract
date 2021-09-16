@@ -186,6 +186,7 @@ contract TrueReflect is IERC20, Ownable {
 
     mapping(address => uint256) internal _balances;
     mapping (address => bool) internal _isExcludedFromReflect;
+    mapping (address => bool) internal _isExcludedFromAntiWhale;
     mapping (address => bool) internal _isExcludedFromFees;
     mapping(address => mapping(address => uint256)) internal _allowances;
 
@@ -236,6 +237,10 @@ contract TrueReflect is IERC20, Ownable {
     function isExcludedfromReflect(address _address) external view returns (bool _bool) {
         _bool = _isExcludedFromReflect[_address];
     }
+          
+    function isExcludedfromAntiWhale(address _address) external view returns (bool _bool) {
+        _bool = _isExcludedFromAntiWhale[_address];
+    }
         
     function isExcludedfromFees(address _address) external view returns (bool _bool) {
         _bool = _isExcludedFromFees[_address];
@@ -253,6 +258,10 @@ contract TrueReflect is IERC20, Ownable {
     
     function excludeFromFees(address _address, bool _bool) external onlyDev {
         _isExcludedFromFees[_address] = _bool;
+    }    
+    
+    function excludeFromAntiWhale(address _address, bool _bool) external onlyDev {
+        _isExcludedFromAntiWhale[_address] = _bool;
     }
 
     function settleDeadAddress() internal { // scan dead address and spread its value to all holders.
@@ -264,7 +273,7 @@ contract TrueReflect is IERC20, Ownable {
     }
 
     function setTransferTaxRate(uint _amount) external onlyDev {
-        require(_amount <= 7000 && _amount >= 1000); // Max 15%, Min 1%
+        require(_amount <= 15000 && _amount >= 1000); // Max 15%, Min 1%
         _transferTaxRate = _amount;
     }
     

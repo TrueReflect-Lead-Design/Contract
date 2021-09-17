@@ -519,12 +519,12 @@ contract MasterChef is Ownable, ReentrancyGuard {
         if (_withUpdate) {
             massUpdatePools();
         }
-        uint256 lastRewardBlock = block.timestamp > startTime ? block.timestamp : startTime;
+        uint256 lastRewardTime = block.timestamp > startTime ? block.timestamp : startTime;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         poolInfo.push(PoolInfo({
             lpToken: _lpToken,
             allocPoint: _allocPoint,
-            lastRewardTime: lastRewardBlock,
+            lastRewardTime: lastRewardTime,
             accTokenPerShare: 0,
             depositFeeBP: _depositFeeBP
         }));

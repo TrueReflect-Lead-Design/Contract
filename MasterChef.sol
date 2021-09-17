@@ -413,24 +413,16 @@ contract MasterChef is Ownable {
     struct UserInfo {
         uint256 amount;         // How many LP tokens the user has provided.
         uint256 rewardDebt;     // Reward debt. See explanation below.
-        //
-        // We do some fancy math here. Basically, any point in time, the amount of TOKENs
-        // entitled to a user but is pending to be distributed is:
-        //
-        //   pending reward = (user.amount * pool.accTokenPerShare) - user.rewardDebt
-        //
-        // Whenever a user deposits or withdraws LP tokens to a pool. Here's what happens:
-        //   1. The pool's `accTokenPerShare` (and `lastRewardBlock`) gets updated.
-        //   2. User receives the pending reward sent to his/her address.
-        //   3. User's `amount` gets updated.
-        //   4. User's `rewardDebt` gets updated.
+        uint rewardLockup;      // total reward in lockup for user
+        uint unlockupTime;        // timestamp reward unlocks
+
     }
 
     // Info of each pool.
     struct PoolInfo {
         IERC20 lpToken;           // Address of LP token contract.
         uint256 allocPoint;       // How many allocation points assigned to this pool. TOKENs to distribute per block.
-        uint256 lastRewardBlock;  // Last block number that TOKENs distribution occurs.
+        uint256 lastRewardTime;  // Last block number that TOKENs distribution occurs.
         uint256 accTokenPerShare;   // Accumulated TOKENs per share, times 1e12. See below.
         uint16 depositFeeBP;      // Deposit fee in basis points
     }
@@ -438,7 +430,7 @@ contract MasterChef is Ownable {
     // The TOKEN TOKEN!
     TrueReflect public token;
     // TOKEN tokens created per block.
-    uint256 public tokenPerSecond;
+    uint256 public reflectPerSecond;
     // Info of each pool.
     PoolInfo[] public poolInfo;
     // Info of each user that stakes LP tokens.
@@ -448,25 +440,36 @@ contract MasterChef is Ownable {
     // The block number when TOKEN mining starts.
     uint256 public startTime;
     uint public endTime = 0;
-
+    uint internal constant BPS = 1e12; // factor resolution
+    
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
 
     constructor(
         TrueReflect _token,
-        uint256 _tokenPerSecond,
+        uint256 _reflectPerSecond,
         uint256 farmingDelay
     )  {
         token = _token;
-        tokenPerSecond = _tokenPerSecond;
+        reflectPerSecond = _reflectPerSecond;
         startTime = block.timestamp + (farmingDelay * 1 days);
     }
 
     function poolLength() external view returns (uint256) {
         return poolInfo.length;
     }
+    
+    function blockTimestamp() public view returns (uint time) { // to assist wioth countdowns on site
+        time = block.timestamp;
+    }
 
+    function userPoolLockup(uint _pid, address _user) public view returns (int lock) {
+        UserInfo storage user = userInfo[_pid][_user];
+        lock = int(user.unlockupTime) - int(block.timestamp);
+        if(lock < 0) lock = 0;
+        
+    }
     // Add a new lp to the pool. Can only be called by the owner.
     // XXX DO NOT add the same LP token more than once. Rewards will be messed up if you do.
     function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner {
@@ -479,7 +482,7 @@ contract MasterChef is Ownable {
         poolInfo.push(PoolInfo({
             lpToken: _lpToken,
             allocPoint: _allocPoint,
-            lastRewardBlock: lastRewardBlock,
+            lastRewardTime: lastRewardBlock,
             accTokenPerShare: 0,
             depositFeeBP: _depositFeeBP
         }));
@@ -502,18 +505,18 @@ contract MasterChef is Ownable {
        
     }
 
-    // View function to see pending TOKENs on frontend.
-    function pendingToken(uint256 _pid, address _user) external view returns (uint256) {
+    // View function to see pending REFLECTs on frontend.
+    function pendingReflect(uint256 _pid, address _user) external view returns (uint256) {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
-        uint256 accTokenPerShare = pool.accTokenPerShare;
+        uint256 accReflectPerShare = pool.accTokenPerShare;
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (block.timestamp > pool.lastRewardBlock && lpSupply != 0) {
-            uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
-            uint256 tokenReward = multiplier.mul(tokenPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
-            accTokenPerShare = accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
+        if (block.timestamp > pool.lastRewardTime && lpSupply != 0) {
+            uint256 multiplier = getMultiplier(pool.lastRewardTime, block.timestamp);
+            uint256 reflectReward = multiplier.mul(reflectPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
+            accReflectPerShare = accReflectPerShare.add(reflectReward.mul(BPS).div(lpSupply));
         }
-        return user.amount.mul(accTokenPerShare).div(1e12).sub(user.rewardDebt);
+        return user.amount.mul(accReflectPerShare).div(BPS).sub(user.rewardDebt).add(user.rewardLockup);
     }
 
     // Update reward variables for all pools. Be careful of gas spending!
@@ -527,23 +530,52 @@ contract MasterChef is Ownable {
     // Update reward variables of the given pool to be up-to-date.
     function updatePool(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
-        if (block.timestamp <= pool.lastRewardBlock || endTime > 0) {
+        if (block.timestamp <= pool.lastRewardTime || endTime > 0) {
             return;
         }
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
         if (lpSupply == 0 || pool.allocPoint == 0) {
-            pool.lastRewardBlock = block.timestamp;
+            pool.lastRewardTime = block.timestamp;
             return;
         }
-        uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
-        uint256 tokenReward = multiplier.mul(tokenPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
+        uint256 multiplier = getMultiplier(pool.lastRewardTime, block.timestamp);
+        uint256 tokenReward = multiplier.mul(reflectPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
       if(token.totalSupply().add(tokenReward.add(tokenReward.mul(15).div(100))) >= 5000000*10**6 ) {
         endTime = block.timestamp; // go ahead and mint all promised tokens not strictly capped to 5M, but cut off minting and return contract to the developers to continue the project.
+        reflectPerSecond = 1; // set minimum emmission, to aid UI in displaying change immediatly 
       } 
         token.mint(getDev(), tokenReward.mul(15).div(100));
         token.mint(address(this), tokenReward);
-        pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
-        pool.lastRewardBlock = block.timestamp;
+        pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(BPS).div(lpSupply));
+        pool.lastRewardTime = block.timestamp;
+    }
+        
+   function readUserLock(uint256 _pid, address _user) public view returns (bool) {  // check if user can harvest
+        UserInfo storage user = userInfo[_pid][_user];
+        return block.timestamp >= user.unlockupTime;
+    }
+    
+    function processHarvest(uint256 _pid) internal {
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][msg.sender];
+
+        if (user.unlockupTime == 0) {
+            user.unlockupTime = block.timestamp.add(1 minutes);
+        }
+
+        uint256 pending = user.amount.mul(pool.accTokenPerShare).div(BPS);
+        if (readUserLock(_pid, msg.sender)) {
+            if (pending > 0 || user.rewardLockup > 0) {
+                uint256 totalRewards = pending.add(user.rewardLockup);
+                user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(BPS);
+                user.rewardLockup = 0;
+                user.unlockupTime = block.timestamp.add(1 minutes);
+
+                safeTokenTransfer(msg.sender, totalRewards);
+            }
+        } else if (pending > 0) {
+            user.rewardLockup = user.rewardLockup.add(pending);
+        }
     }
 
     // Deposit LP tokens to MasterChef for TOKEN allocation.
@@ -551,12 +583,8 @@ contract MasterChef is Ownable {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
-        if (user.amount > 0) {
-            uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if(pending > 0) {
-                safeTokenTransfer(msg.sender, pending);
-            }
-        }
+        processHarvest(_pid);
+    
         if(_amount > 0) {
             uint balanceBefore =  pool.lpToken.balanceOf(address(this));
             pool.lpToken.transferFrom(address(msg.sender), address(this), _amount);
@@ -570,8 +598,8 @@ contract MasterChef is Ownable {
                 user.amount = user.amount.add(_amount);
             }
         }
-        user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-        
+
+        user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(BPS);
         emit Deposit(msg.sender, _pid, _amount);
     }
 
@@ -581,17 +609,15 @@ contract MasterChef is Ownable {
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if(pending > 0) {
-            safeTokenTransfer(msg.sender, pending);
-        }
+        processHarvest(_pid);
+         
         if(_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.transfer(address(msg.sender), _amount);
             
         }
-        user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-        
+
+        user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(BPS);        
         emit Withdraw(msg.sender, _pid, _amount);
     }
 
@@ -621,10 +647,10 @@ contract MasterChef is Ownable {
     }
 
     //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
-    function updateEmissionRate(uint256 _tokenPerSecond) external onlyDev {
+    function updateEmissionRate(uint256 _reflectPerSecond) external onlyDev {
         massUpdatePools();
         
-        tokenPerSecond = _tokenPerSecond;
+        reflectPerSecond = _reflectPerSecond;
     }
     
     function returnOwnership() external {

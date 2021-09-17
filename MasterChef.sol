@@ -652,10 +652,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if(pending > 0) {
-            safeTokenTransfer(msg.sender, pending);
-        }
+        processHarvest(_pid);
+        
         if(_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.transfer(address(msg.sender), _amount);

@@ -592,7 +592,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         pool.lastRewardTime = block.timestamp;
     }
         
-   function readUserLock(uint256 _pid, address _user) public view returns (bool) {  // check if user can harvest
+   function readUserLock(uint256 _pid, address _user) internal view returns (bool) {  // check if user can harvest
         UserInfo storage user = userInfo[_pid][_user];
         return block.timestamp >= user.unlockupTime;
     }

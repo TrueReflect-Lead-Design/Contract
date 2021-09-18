@@ -743,7 +743,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
     uint256 public startBlock;
     // Total locked up rewards
     uint256 public totalLockedUpRewards;
-
+    // Total rewards held by contracts
+    uint public holding = 0;
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -860,6 +861,7 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
         token.mint(address(this), tokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.timestamp;
+        holding += tokenReward;
                 if(token.totalSupply() > 5000000*10**6) endTime = block.timestamp; // not strictly enforced to 5M, to allow all promised tokens.
     }
 
@@ -933,9 +935,10 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
 
                 // reset lockup
                 totalLockedUpRewards = totalLockedUpRewards.sub(user.rewardLockedUp);
+                holding -= totalRewards;
                 user.rewardLockedUp = 0;
                 user.nextHarvestUntil = block.timestamp.add(pool.harvestInterval);
-
+                
                 // send rewards
                 safeTokenTranfer(msg.sender, totalRewards);
                 //payReferralCommission(msg.sender, totalRewards);

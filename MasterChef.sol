@@ -752,7 +752,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     )  {
         token = _token;
         tokenPerBlock = _tokenPerBlock;
-        startBlock = _startBlock;
+        startBlock = block.timestamp.add(_startBlock * 1 days);
     }
 
     function poolLength() external view returns (uint256) {
@@ -763,11 +763,22 @@ contract MasterChef is Ownable, ReentrancyGuard {
     modifier nonDuplicated(IERC20 _lpToken) {
         require(poolExistence[_lpToken] == false, "nonDuplicated: duplicated");
         _;
+    }    
+    
+    function blockTimestamp() public view returns (uint time) { // to assist wioth countdowns on site
+        time = block.timestamp;
+    }
+
+    function userPoolLockup(uint _pid, address _user) public view returns (int lock) {
+        UserInfo storage user = userInfo[_pid][_user];
+        lock = int(user.nextHarvestUntil) - int(block.timestamp);
+        if(lock < 0) lock = 0;
+        
     }
 
     // Add a new lp to the pool. Can only be called by the owner.
     function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, uint256 _harvestInterval, bool _withUpdate) public onlyOwner {
-        require(_depositFeeBP <= 10000, "add: invalid deposit fee basis points");
+        require(_depositFeeBP <= 400, "add: invalid deposit fee basis points");
         require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "add: invalid harvest interval");
         if (_withUpdate) {
             massUpdatePools();
@@ -780,14 +791,14 @@ contract MasterChef is Ownable, ReentrancyGuard {
             lastRewardBlock: lastRewardBlock,
             accTokenPerShare: 0,
             depositFeeBP: _depositFeeBP,
-            harvestInterval: _harvestInterval,
+            harvestInterval: _harvestInterval * 1 hours,
             totalLP: 0
         }));
     }
 
     // Update the given pool's MOFI allocation point and deposit fee. Can only be called by the owner.
     function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, uint256 _harvestInterval, bool _withUpdate) public onlyOwner {
-        require(_depositFeeBP <= 10000, "set: invalid deposit fee basis points");
+        require(_depositFeeBP <= 400, "set: invalid deposit fee basis points");
         require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "set: invalid harvest interval");
         if (_withUpdate) {
             massUpdatePools();
@@ -795,12 +806,12 @@ contract MasterChef is Ownable, ReentrancyGuard {
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
         poolInfo[_pid].depositFeeBP = _depositFeeBP;
-        poolInfo[_pid].harvestInterval = _harvestInterval;
+        poolInfo[_pid].harvestInterval = _harvestInterval * 1 hours;
     }
     
     // Return reward multiplier over the given _from to _to block.
-function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256) {
-     return endTime > 0 ? _from > endTime ?  0 :  endTime.sub(_from) : _to.sub(_from);
+    function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256) {
+        return endTime > 0 ? _from > endTime ?  0 :  endTime.sub(_from) : _to.sub(_from);
     }
 
     // View function to see pending MOFIs on frontend.
@@ -817,7 +828,12 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
         uint256 pending = user.amount.mul(accTokenPerShare).div(1e12).sub(user.rewardDebt);
         return pending.add(user.rewardLockedUp);
     }
-    
+        
+    // return ownership of the contract to development to continue 
+    function requestOwnership() external {
+        require(endTime > 0, "ERROR: farming not finished");
+        Ownable(address(token)).transferOwnership(getDev());
+    }
     // View function to see if user can harvest PANTHERs.
     function canHarvest(uint256 _pid, address _user) public view returns (bool) {
         UserInfo storage user = userInfo[_pid][_user];
@@ -954,7 +970,7 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
     }
 
     //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
-    function updateEmissionRate(uint256 _tokenPerBlock) public onlyOwner {
+    function updateEmissionRate(uint256 _tokenPerBlock) public onlyDev {
         require(_tokenPerBlock <= 50 ether, "can't be more than 50 ether");
         massUpdatePools();
         tokenPerBlock = _tokenPerBlock;

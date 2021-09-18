@@ -717,20 +717,17 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 accTokenPerShare; // Accumulated MOFIs per share, times 1e12. See below.
         uint16 depositFeeBP; // Deposit fee in basis points
         uint256 harvestInterval;  // Harvest interval in seconds
+        uint totalLP; // track how many total deposits held by chef
     }
 
     // The MOFI TOKEN!
     TrueReflect public token;
-    // Dev address.
-    address public devaddr;
     // MOFI tokens created per block.
     uint256 public tokenPerBlock;
     // Bonus muliplier for early token makers.
     uint256 public BONUS_MULTIPLIER = 1;
-    // Deposit Fee address
-    address public feeAddress;
-    // Max harvest interval: 14 days.
-    uint256 public constant MAXIMUM_HARVEST_INTERVAL = 14 days;
+    // Max harvest interval: 12 hours.
+    uint256 public constant MAXIMUM_HARVEST_INTERVAL = 12 hours;
     
     uint endTime = 0;
     // Info of each pool.
@@ -741,28 +738,19 @@ contract MasterChef is Ownable, ReentrancyGuard {
     uint256 public totalAllocPoint = 0;
     // The block number when MOFI mining starts.
     uint256 public startBlock;
-    // Total locked up rewards
-    uint256 public totalLockedUpRewards;
-    // Total rewards held by contracts
-    uint public holding = 0;
+
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
-    event SetFeeAddress(address indexed user, address indexed newAddress);
-    event SetDevAddress(address indexed user, address indexed newAddress);
     event UpdateEmissionRate(address indexed user, uint256 tokenPerBlock);
     event RewardLockedUp(address indexed user, uint256 indexed pid, uint256 amountLockedUp);
 
     constructor(
         TrueReflect _token,
-        address _devaddr,
-        address _feeAddress,
         uint256 _tokenPerBlock,
         uint256 _startBlock
     )  {
         token = _token;
-        devaddr = _devaddr;
-        feeAddress = _feeAddress;
         tokenPerBlock = _tokenPerBlock;
         startBlock = _startBlock;
     }
@@ -792,7 +780,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
             lastRewardBlock: lastRewardBlock,
             accTokenPerShare: 0,
             depositFeeBP: _depositFeeBP,
-            harvestInterval: _harvestInterval
+            harvestInterval: _harvestInterval,
+            totalLP: 0
         }));
     }
 
@@ -819,7 +808,7 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
         uint256 accTokenPerShare = pool.accTokenPerShare;
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
+        uint256 lpSupply = pool.totalLP;
         if (block.timestamp > pool.lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
             uint256 tokenReward = multiplier.mul(tokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
@@ -849,19 +838,18 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
         if (block.timestamp <= pool.lastRewardBlock) {
             return;
         }
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (lpSupply == 0 || pool.allocPoint == 0) {
+        uint256 lpSupply = pool.totalLP;
+        if (lpSupply == 0 || pool.allocPoint == 0 || endTime > 0) {
             pool.lastRewardBlock = block.timestamp;
             return;
         }
 
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
         uint256 tokenReward = multiplier.mul(tokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
-        token.mint(devaddr, tokenReward.div(10));
+        token.mint(getDev(), tokenReward.div(10));
         token.mint(address(this), tokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.timestamp;
-        holding += tokenReward;
                 if(token.totalSupply() > 5000000*10**6) endTime = block.timestamp; // not strictly enforced to 5M, to allow all promised tokens.
     }
 
@@ -878,13 +866,16 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
             pool.lpToken.transferFrom(address(msg.sender), address(this), _amount);
             uint balanceAfter =  pool.lpToken.balanceOf(address(this));
             _amount = balanceAfter.sub(balanceBefore);
-   
+            
             if (pool.depositFeeBP > 0) {
                 uint256 depositFee = _amount.mul(pool.depositFeeBP).div(10000);
-                pool.lpToken.safeTransfer(feeAddress, depositFee);
-                user.amount = user.amount.add(_amount).sub(depositFee);
+                _amount -= depositFee;
+                pool.lpToken.safeTransfer(getDev(), depositFee);
+                user.amount = user.amount.add(_amount);
+                pool.totalLP += _amount;
             } else {
                 user.amount = user.amount.add(_amount);
+                pool.totalLP += _amount;
             }
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
@@ -901,6 +892,7 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
+            pool.totalLP -= _amount;
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
         emit Withdraw(msg.sender, _pid, _amount);
@@ -915,7 +907,9 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
         user.rewardDebt = 0;
         user.rewardLockedUp = 0;
         user.nextHarvestUntil = 0;
+        pool.totalLP -= amount;
         pool.lpToken.safeTransfer(address(msg.sender), amount);
+
         emit EmergencyWithdraw(msg.sender, _pid, amount);
     }
     
@@ -934,8 +928,6 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
                 uint256 totalRewards = pending.add(user.rewardLockedUp);
 
                 // reset lockup
-                totalLockedUpRewards = totalLockedUpRewards.sub(user.rewardLockedUp);
-                holding -= totalRewards;
                 user.rewardLockedUp = 0;
                 user.nextHarvestUntil = block.timestamp.add(pool.harvestInterval);
                 
@@ -945,7 +937,6 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
             }
         } else if (pending > 0) {
             user.rewardLockedUp = user.rewardLockedUp.add(pending);
-            totalLockedUpRewards = totalLockedUpRewards.add(pending);
             emit RewardLockedUp(msg.sender, _pid, pending);
         }
     }
@@ -960,19 +951,6 @@ function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256)
             transferSuccess = token.transfer(_to, _amount);
         }
         require(transferSuccess, "safeTokenTranfer: transfer failed");
-    }
-
-    // Update dev address by the previous dev.
-    function dev(address _devaddr) public {
-        require(msg.sender == devaddr, "dev: wut?");
-        devaddr = _devaddr;
-        emit SetDevAddress(msg.sender, _devaddr);
-    }
-
-    function setFeeAddress(address _feeAddress) public {
-        require(msg.sender == feeAddress, "setFeeAddress: FORBIDDEN");
-        feeAddress = _feeAddress;
-        emit SetFeeAddress(msg.sender, _feeAddress);
     }
 
     //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.

@@ -697,7 +697,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 rewardLockedUp;  // Reward locked up.
         uint256 nextHarvestUntil; // When can the user harvest again.
         //
-        // We do some fancy math here. Basically, any point in time, the amount of MOFIs
+        // We do some fancy math here. Basically, any point in time, the amount of reflect
         // entitled to a user but is pending to be distributed is:
         //
         //   pending reward = (user.amount * pool.accTokenPerShare) - user.rewardDebt
@@ -712,46 +712,44 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Info of each pool.
     struct PoolInfo {
         IERC20 lpToken; // Address of LP token contract.
-        uint256 allocPoint; // How many allocation points assigned to this pool. MOFIs to distribute per block.
-        uint256 lastRewardBlock; // Last block number that MOFIs distribution occurs.
-        uint256 accTokenPerShare; // Accumulated MOFIs per share, times 1e12. See below.
+        uint256 allocPoint; // How many allocation points assigned to this pool. Reflect to distribute per block.
+        uint256 lastRewardBlock; // Last block number that reflect distribution occurs.
+        uint256 accTokenPerShare; // Accumulated reflect per share, times 1e12. See below.
         uint16 depositFeeBP; // Deposit fee in basis points
         uint256 harvestInterval;  // Harvest interval in seconds
         uint totalLP; // track how many total deposits held by chef
     }
 
-    // The MOFI TOKEN!
+    // The REFLECT TOKEN!
     TrueReflect public token;
-    // MOFI tokens created per block.
-    uint256 public tokenPerBlock;
-    // Bonus muliplier for early token makers.
-    uint256 public BONUS_MULTIPLIER = 1;
+    // reflect tokens created per second.
+    uint256 public tokenPerSecond;
     // Max harvest interval: 12 hours.
     uint256 public constant MAXIMUM_HARVEST_INTERVAL = 12 hours;
-    
-    uint endTime = 0;
     // Info of each pool.
     PoolInfo[] public poolInfo;
     // Info of each user that stakes LP tokens.
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
     // Total allocation points. Must be the sum of all allocation points in all pools.
     uint256 public totalAllocPoint = 0;
-    // The block number when MOFI mining starts.
+    // The block timestamp when Reflect mining starts.
     uint256 public startBlock;
-
+    // block timestamp farming ended.
+    uint public endTime = 0;
+    
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
-    event UpdateEmissionRate(address indexed user, uint256 tokenPerBlock);
+    event UpdateEmissionRate(address indexed user, uint256 tokenPerSecond);
     event RewardLockedUp(address indexed user, uint256 indexed pid, uint256 amountLockedUp);
 
     constructor(
         TrueReflect _token,
-        uint256 _tokenPerBlock,
+        uint256 _tokenPerSecond,
         uint256 _startBlock
     )  {
         token = _token;
-        tokenPerBlock = _tokenPerBlock;
+        tokenPerSecond = _tokenPerSecond;
         startBlock = block.timestamp.add(_startBlock * 1 days);
     }
 
@@ -765,7 +763,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         _;
     }    
     
-    function blockTimestamp() public view returns (uint time) { // to assist wioth countdowns on site
+    function blockTimestamp() public view returns (uint time) { // to assist with countdowns on site
         time = block.timestamp;
     }
 
@@ -776,7 +774,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         
     }
 
-    // Add a new lp to the pool. Can only be called by the owner.
     function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, uint256 _harvestInterval, bool _withUpdate) public onlyOwner {
         require(_depositFeeBP <= 400, "add: invalid deposit fee basis points");
         require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "add: invalid harvest interval");
@@ -796,7 +793,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }));
     }
 
-    // Update the given pool's MOFI allocation point and deposit fee. Can only be called by the owner.
     function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, uint256 _harvestInterval, bool _withUpdate) public onlyOwner {
         require(_depositFeeBP <= 400, "set: invalid deposit fee basis points");
         require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "set: invalid harvest interval");
@@ -809,12 +805,10 @@ contract MasterChef is Ownable, ReentrancyGuard {
         poolInfo[_pid].harvestInterval = _harvestInterval * 1 hours;
     }
     
-    // Return reward multiplier over the given _from to _to block.
     function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256) {
         return endTime > 0 ? _from > endTime ?  0 :  endTime.sub(_from) : _to.sub(_from);
     }
 
-    // View function to see pending MOFIs on frontend.
     function pendingToken(uint256 _pid, address _user) external view returns (uint256) {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
@@ -822,25 +816,22 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 lpSupply = pool.totalLP;
         if (block.timestamp > pool.lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
-            uint256 tokenReward = multiplier.mul(tokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
+            uint256 tokenReward = multiplier.mul(tokenPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
             accTokenPerShare = accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         }
         uint256 pending = user.amount.mul(accTokenPerShare).div(1e12).sub(user.rewardDebt);
         return pending.add(user.rewardLockedUp);
     }
         
-    // return ownership of the contract to development to continue 
     function requestOwnership() external {
         require(endTime > 0, "ERROR: farming not finished");
         Ownable(address(token)).transferOwnership(getDev());
     }
-    // View function to see if user can harvest PANTHERs.
     function canHarvest(uint256 _pid, address _user) public view returns (bool) {
         UserInfo storage user = userInfo[_pid][_user];
         return block.timestamp >= user.nextHarvestUntil;
     }
 
-    // Update reward variables for all pools. Be careful of gas spending!
     function massUpdatePools() public {
         uint256 length = poolInfo.length;
         for (uint256 pid = 0; pid < length; ++pid) {
@@ -848,7 +839,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }
     }
 
-    // Update reward variables of the given pool to be up-to-date.
     function updatePool(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
         if (block.timestamp <= pool.lastRewardBlock) {
@@ -861,7 +851,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }
 
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
-        uint256 tokenReward = multiplier.mul(tokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
+        uint256 tokenReward = multiplier.mul(tokenPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
         token.mint(getDev(), tokenReward.div(10));
         token.mint(address(this), tokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
@@ -869,7 +859,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
                 if(token.totalSupply() > 5000000*10**6) endTime = block.timestamp; // not strictly enforced to 5M, to allow all promised tokens.
     }
 
-    // Deposit LP tokens to MasterChef for MOFI allocation.
     function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
@@ -898,7 +887,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         emit Deposit(msg.sender, _pid, _amount);
     }
 
-    // Withdraw LP tokens from MasterChef.
     function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
@@ -914,7 +902,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         emit Withdraw(msg.sender, _pid, _amount);
     }
 
-    // Withdraw without catoken about rewards. EMERGENCY ONLY.
     function emergencyWithdraw(uint256 _pid) public nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
@@ -929,7 +916,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         emit EmergencyWithdraw(msg.sender, _pid, amount);
     }
     
-    // Pay or lockup pending Token.
     function payOrLockupPending(uint256 _pid) internal {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
@@ -943,13 +929,10 @@ contract MasterChef is Ownable, ReentrancyGuard {
             if (pending > 0 || user.rewardLockedUp > 0) {
                 uint256 totalRewards = pending.add(user.rewardLockedUp);
 
-                // reset lockup
                 user.rewardLockedUp = 0;
                 user.nextHarvestUntil = block.timestamp.add(pool.harvestInterval);
                 
-                // send rewards
                 safeTokenTranfer(msg.sender, totalRewards);
-                //payReferralCommission(msg.sender, totalRewards);
             }
         } else if (pending > 0) {
             user.rewardLockedUp = user.rewardLockedUp.add(pending);
@@ -957,7 +940,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }
     }
 
-    // Safe token transfer function, just in case if rounding error causes pool to not have enough MOFIs.
     function safeTokenTranfer(address _to, uint256 _amount) internal {
         uint256 tokenBal = token.balanceOf(address(this));
         bool transferSuccess = false;
@@ -969,12 +951,11 @@ contract MasterChef is Ownable, ReentrancyGuard {
         require(transferSuccess, "safeTokenTranfer: transfer failed");
     }
 
-    //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
-    function updateEmissionRate(uint256 _tokenPerBlock) public onlyDev {
-        require(_tokenPerBlock <= 50 ether, "can't be more than 50 ether");
+    function updateEmissionRate(uint256 _tokenPerSecond) public onlyDev {
+        require(_tokenPerSecond <= 50 ether, "can't be more than 50 ether"); // just be reasonable!
         massUpdatePools();
-        tokenPerBlock = _tokenPerBlock;
-        emit UpdateEmissionRate(msg.sender, _tokenPerBlock);
+        tokenPerSecond = _tokenPerSecond;
+        emit UpdateEmissionRate(msg.sender, _tokenPerSecond);
     }
 
 }

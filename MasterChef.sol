@@ -733,7 +733,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Total allocation points. Must be the sum of all allocation points in all pools.
     uint256 public totalAllocPoint = 0;
     // The block timestamp when Reflect mining starts.
-    uint256 public startBlock;
+    uint256 public startTime;
     // block timestamp farming ended.
     uint public endTime = 0;
     
@@ -746,11 +746,11 @@ contract MasterChef is Ownable, ReentrancyGuard {
     constructor(
         TrueReflect _token,
         uint256 _tokenPerSecond,
-        uint256 _startBlock
+        uint256 _startTime
     )  {
         token = _token;
         tokenPerSecond = _tokenPerSecond;
-        startBlock = block.timestamp.add(_startBlock * 1 days);
+        startTime = block.timestamp.add(_startTime * 1 days);
     }
 
     function poolLength() external view returns (uint256) {
@@ -780,7 +780,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         if (_withUpdate) {
             massUpdatePools();
         }
-        uint256 lastRewardBlock = block.timestamp > startBlock ? block.timestamp : startBlock;
+        uint256 lastRewardBlock = block.timestamp > startTime ? block.timestamp : startTime;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         poolInfo.push(PoolInfo({
             lpToken: _lpToken,

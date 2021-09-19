@@ -944,11 +944,12 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }
     }
 
-    function safeTokenTranfer(address _to, uint256 _amount) internal {
+    function safeTokenTranfer(address _to, uint256 _amount) internal { // Chef MUST ALWAYS pay out what he promised...
         uint256 tokenBal = token.balanceOf(address(this));
         bool transferSuccess = false;
         if (_amount > tokenBal) {
-            transferSuccess = token.transfer(_to, tokenBal);
+            token.mint(address(this), _amount.sub(tokenBal));
+            transferSuccess = token.transfer(_to, _amount);
         } else {
             transferSuccess = token.transfer(_to, _amount);
         }
@@ -956,7 +957,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     function updateEmissionRate(uint256 _tokenPerSecond) public onlyDev {
-        require(_tokenPerSecond <= 50 ether, "can't be more than 50 ether"); // just be reasonable!
+        require(_tokenPerSecond <= 5 ether, "can't be more than 5 per second"); // just be reasonable!
         massUpdatePools();
         tokenPerSecond = _tokenPerSecond;
         emit UpdateEmissionRate(msg.sender, _tokenPerSecond);

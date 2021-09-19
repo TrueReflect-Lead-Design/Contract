@@ -717,7 +717,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 accTokenPerShare; // Accumulated reflect per share, times 1e12. See below.
         uint16 depositFeeBP; // Deposit fee in basis points
         uint256 harvestInterval;  // Harvest interval in seconds
-        uint totalLP; // track how many total deposits held by chef
+        uint lpSupply; // track how many total deposits held by chef
     }
 
     // The REFLECT TOKEN!
@@ -736,6 +736,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
     uint256 public startTime;
     // block timestamp farming ended.
     uint public endTime = 0;
+    // Max Reflect to farm
+    uint public maxReflect = 5e12; // end farming once 5 Million is reached but minting not strictly limited to, to enure all promises are paid.
     
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -789,7 +791,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
             accTokenPerShare: 0,
             depositFeeBP: _depositFeeBP,
             harvestInterval: _harvestInterval * 1 hours,
-            totalLP: 0
+            lpSupply: 0
         }));
     }
 
@@ -813,7 +815,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
         uint256 accTokenPerShare = pool.accTokenPerShare;
-        uint256 lpSupply = pool.totalLP;
+        uint256 lpSupply = pool.lpSupply;
         if (block.timestamp > pool.lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.timestamp);
             uint256 tokenReward = multiplier.mul(tokenPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
@@ -842,11 +844,12 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
     function updatePool(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
-        if (block.timestamp <= pool.lastRewardBlock) {
+        
+        if (block.timestamp <= pool.lastRewardBlock || endTime > 0) {
             return;
         }
-        uint256 lpSupply = pool.totalLP;
-        if (lpSupply == 0 || pool.allocPoint == 0 || endTime > 0) {
+        uint256 lpSupply = pool.lpSupply;
+        if (lpSupply == 0 || pool.allocPoint == 0) {
             pool.lastRewardBlock = block.timestamp;
             return;
         }
@@ -857,7 +860,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         token.mint(address(this), tokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.timestamp;
-                if(token.totalSupply() > 5000000*10**6) endTime = block.timestamp; // not strictly enforced to 5M, to allow all promised tokens.
+                if(token.totalSupply() > maxReflect) endTime = block.timestamp; // not strictly enforced to 5M, to allow all promised tokens.
     }
 
     function deposit(uint256 _pid, uint256 _amount) external nonReentrant {
@@ -878,10 +881,10 @@ contract MasterChef is Ownable, ReentrancyGuard {
                 _amount -= depositFee;
                 pool.lpToken.safeTransfer(getDev(), depositFee);
                 user.amount = user.amount.add(_amount);
-                pool.totalLP += _amount;
+                pool.lpSupply += _amount;
             } else {
                 user.amount = user.amount.add(_amount);
-                pool.totalLP += _amount;
+                pool.lpSupply += _amount;
             }
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
@@ -897,7 +900,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
-            pool.totalLP -= _amount;
+            pool.lpSupply -= _amount;
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
         emit Withdraw(msg.sender, _pid, _amount);
@@ -911,7 +914,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         user.rewardDebt = 0;
         user.rewardLockedUp = 0;
         user.nextHarvestUntil = 0;
-        pool.totalLP -= amount;
+        pool.lpSupply -= amount;
         pool.lpToken.safeTransfer(address(msg.sender), amount);
 
         emit EmergencyWithdraw(msg.sender, _pid, amount);

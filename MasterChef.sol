@@ -763,11 +763,11 @@ contract MasterChef is Ownable, ReentrancyGuard {
         _;
     }    
     
-    function blockTimestamp() public view returns (uint time) { // to assist with countdowns on site
+    function blockTimestamp() external view returns (uint time) { // to assist with countdowns on site
         time = block.timestamp;
     }
 
-    function userPoolLockup(uint _pid, address _user) public view returns (int lock) {
+    function userPoolLockup(uint _pid, address _user) external view returns (int lock) {
         UserInfo storage user = userInfo[_pid][_user];
         lock = int(user.nextHarvestUntil) - int(block.timestamp);
         if(lock < 0) lock = 0;
@@ -827,7 +827,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
         require(endTime > 0, "ERROR: farming not finished");
         Ownable(address(token)).transferOwnership(getDev());
     }
-    function canHarvest(uint256 _pid, address _user) public view returns (bool) {
+    
+    function canHarvest(uint256 _pid, address _user) internal view returns (bool) {
         UserInfo storage user = userInfo[_pid][_user];
         return block.timestamp >= user.nextHarvestUntil;
     }
@@ -859,7 +860,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
                 if(token.totalSupply() > 5000000*10**6) endTime = block.timestamp; // not strictly enforced to 5M, to allow all promised tokens.
     }
 
-    function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
+    function deposit(uint256 _pid, uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
@@ -887,7 +888,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         emit Deposit(msg.sender, _pid, _amount);
     }
 
-    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
+    function withdraw(uint256 _pid, uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");

@@ -845,11 +845,11 @@ contract MasterChef is Ownable, ReentrancyGuard {
     function updatePool(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
         
-        if (block.timestamp <= pool.lastRewardBlock || endTime > 0) {
+        if (block.timestamp <= pool.lastRewardBlock) {
             return;
         }
         uint256 lpSupply = pool.lpSupply;
-        if (lpSupply == 0 || pool.allocPoint == 0) {
+        if (lpSupply == 0 || pool.allocPoint == 0 || endTime > 0) {
             pool.lastRewardBlock = block.timestamp;
             return;
         }

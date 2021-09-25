@@ -725,7 +725,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // reflect tokens created per second.
     uint256 public tokenPerSecond;
     // Max harvest interval: 12 hours.
-    uint256 public constant MAXIMUM_HARVEST_INTERVAL = 12 hours;
+    uint256 public constant MAXIMUM_HARVEST_INTERVAL = 12;
     // Info of each pool.
     PoolInfo[] public poolInfo;
     // Info of each user that stakes LP tokens.
@@ -957,7 +957,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     function updateEmissionRate(uint256 _tokenPerSecond) public onlyDev {
-        require(_tokenPerSecond <= 5 ether, "can't be more than 5 per second"); // just be reasonable!
+        require(_tokenPerSecond <= 5000000, "can't be more than 5 per second"); // just be reasonable!
         massUpdatePools();
         tokenPerSecond = _tokenPerSecond;
         emit UpdateEmissionRate(msg.sender, _tokenPerSecond);
